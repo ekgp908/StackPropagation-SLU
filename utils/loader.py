@@ -3,8 +3,9 @@
 @StartTime	:           2018/08/13
 @Filename	:           loader.py
 @Software	:           Pycharm
-@Framework  :           Pytorch
+@Framework      :           Pytorch
 @LastModify	:           2019/05/07
+@Modify         :           dahye
 """
 
 import os
@@ -19,10 +20,6 @@ from torch.utils.data import DataLoader
 
 
 class Alphabet(object):
-    """
-    Storage and serialization a set of elements.
-    """
-
     def __init__(self, name, if_use_pad, if_use_unk):
 
         self.__name = name
@@ -32,8 +29,6 @@ class Alphabet(object):
         self.__index2instance = OrderedSet()
         self.__instance2index = OrderedDict()
 
-        # Counter Object record the frequency
-        # of element occurs in raw text.
         self.__counter = Counter()
 
         if if_use_pad:
@@ -48,17 +43,6 @@ class Alphabet(object):
         return self.__name
 
     def add_instance(self, instance):
-        """ Add instances to alphabet.
-
-        1, We support any iterative data structure which
-        contains elements of str type.
-
-        2, We will count added instances that will influence
-        the serialization of unknown instance.
-
-        :param instance: is given instance or a list of it.
-        """
-
         if isinstance(instance, (list, tuple)):
             for element in instance:
                 self.add_instance(element)
@@ -75,19 +59,6 @@ class Alphabet(object):
             self.__index2instance.append(instance)
 
     def get_index(self, instance):
-        """ Serialize given instance and return.
-
-        For unknown words, the return index of alphabet
-        depends on variable self.__use_unk:
-
-            1, If True, then return the index of "<UNK>";
-            2, If False, then return the index of the
-            element that hold max frequency in training data.
-
-        :param instance: is given instance or a list of it.
-        :return: is the serialization of query instance.
-        """
-
         if isinstance(instance, (list, tuple)):
             return [self.get_index(elem) for elem in instance]
 
@@ -103,32 +74,12 @@ class Alphabet(object):
                 return self.__instance2index[max_freq_item]
 
     def get_instance(self, index):
-        """ Get corresponding instance of query index.
-
-        if index is invalid, then throws exception.
-
-        :param index: is query index, possibly iterable.
-        :return: is corresponding instance.
-        """
-
         if isinstance(index, list):
             return [self.get_instance(elem) for elem in index]
 
         return self.__index2instance[index]
 
     def save_content(self, dir_path):
-        """ Save the content of alphabet to files.
-
-        There are two kinds of saved files:
-            1, The first is a list file, elements are
-            sorted by the frequency of occurrence.
-
-            2, The second is a dictionary file, elements
-            are sorted by it serialized index.
-
-        :param dir_path: is the directory path to save object.
-        """
-
         # Check if dir_path exists.
         if not os.path.exists(dir_path):
             os.mkdir(dir_path)
@@ -151,11 +102,6 @@ class Alphabet(object):
 
 
 class TorchDataset(Dataset):
-    """
-    Helper class implementing torch.utils.data.Dataset to
-    instantiate DataLoader which deliveries data batch.
-    """
-
     def __init__(self, text, slot, intent):
         self.__text = text
         self.__slot = slot
@@ -230,18 +176,10 @@ class DatasetManager(object):
         return self.__args.save_dir
 
     @property
-    def intent_forcing_rate(self):
-        return self.__args.intent_forcing_rate
-
-    @property
     def slot_forcing_rate(self):
         return self.__args.slot_forcing_rate
 
     def show_summary(self):
-        """
-        :return: show summary of dataset, training parameters.
-        """
-
         print("Training parameters are listed as follows:\n")
 
         print('\tnumber of train sample:                    {};'.format(len(self.__text_word_data['train'])))
@@ -254,15 +192,10 @@ class DatasetManager(object):
         print('\trate of l2 penalty:					    {};'.format(self.l2_penalty))
         print('\trate of dropout in network:                {};'.format(self.__args.dropout_rate))
         print('\tteacher forcing rate(slot)		    		{};'.format(self.slot_forcing_rate))
-        print('\tteacher forcing rate(intent):		    	{};'.format(self.intent_forcing_rate))
 
         print("\nEnd of parameters show. Save dir: {}.\n\n".format(self.save_dir))
 
     def quick_build(self):
-        """
-        Convenient function to instantiate a dataset object.
-        """
-
         train_path = os.path.join(self.__args.data_dir, 'train.txt')
         dev_path = os.path.join(self.__args.data_dir, 'dev.txt')
         test_path = os.path.join(self.__args.data_dir, 'test.txt')
@@ -281,13 +214,6 @@ class DatasetManager(object):
         self.__intent_alphabet.save_content(alphabet_dir)
 
     def get_dataset(self, data_name, is_digital):
-        """ Get dataset of given unique name.
-
-        :param data_name: is name of stored dataset.
-        :param is_digital: make sure if want serialized data.
-        :return: the required dataset.
-        """
-
         if is_digital:
             return self.__digit_word_data[data_name], \
                    self.__digit_slot_data[data_name], \
@@ -316,14 +242,10 @@ class DatasetManager(object):
             self.__digit_slot_data[data_name] = self.__slot_alphabet.get_index(slot)
             self.__digit_intent_data[data_name] = self.__intent_alphabet.get_index(intent)
 
+
     @staticmethod
     def __read_file(file_path):
-        """ Read data file of given path.
-
-        :param file_path: path of data file.
-        :return: list of sentence, list of slot and list of intent.
-        """
-
+        # 데이터가 리스트로 들어감
         texts, slots, intents = [], [], []
         text, slot = [], []
 
@@ -343,7 +265,15 @@ class DatasetManager(object):
                     text.append(items[0].strip())
                     slot.append(items[1].strip())
 
+        # slot에 intent 같이 써주기
+        for i in range(len(slots)):
+            for j in range(len(slots[i])):
+                #if slots[i][j] != 'O':
+                    slots[i][j] = intents[i][0] + '/' + slots[i][j]
+
         return texts, slots, intents
+
+
 
     def batch_delivery(self, data_name, batch_size=None, is_digital=True, shuffle=True):
         if batch_size is None:
@@ -353,6 +283,7 @@ class DatasetManager(object):
             text = self.__digit_word_data[data_name]
             slot = self.__digit_slot_data[data_name]
             intent = self.__digit_intent_data[data_name]
+
         else:
             text = self.__text_word_data[data_name]
             slot = self.__text_slot_data[data_name]
@@ -360,6 +291,8 @@ class DatasetManager(object):
         dataset = TorchDataset(text, slot, intent)
 
         return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=self.__collate_fn)
+
+
 
     @staticmethod
     def add_padding(texts, items=None, digital=True):
@@ -396,12 +329,10 @@ class DatasetManager(object):
         else:
             return trans_texts, seq_lens, sorted_index
 
+
+
     @staticmethod
     def __collate_fn(batch):
-        """
-        helper function to instantiate a DataLoader Object.
-        """
-
         n_entity = len(batch[0])
         modified_batch = [[] for _ in range(0, n_entity)]
 

@@ -3,8 +3,9 @@
 @StartTime	:           2018/08/13
 @Filename	:           module.py
 @Software	:           Pycharm
-@Framework  :           Pytorch
+@Framework      :           Pytorch
 @LastModify	:           2019/05/07
+@Modify         :           dahye
 """
 
 import math
@@ -18,12 +19,11 @@ from torch.nn.utils.rnn import pad_packed_sequence
 
 class ModelManager(nn.Module):
 
-    def __init__(self, args, num_word, num_slot, num_intent):
+    def __init__(self, args, num_word, num_slot):
         super(ModelManager, self).__init__()
 
         self.__num_word = num_word
         self.__num_slot = num_slot
-        self.__num_intent = num_intent
         self.__args = args
 
         # Initialize an embedding object.
@@ -47,51 +47,30 @@ class ModelManager(nn.Module):
             self.__args.dropout_rate
         )
 
-        # Initialize an Decoder object for intent.
-        self.__intent_decoder = LSTMDecoder(
-            self.__args.encoder_hidden_dim + self.__args.attention_output_dim,
-            self.__args.intent_decoder_hidden_dim,
-            self.__num_intent, self.__args.dropout_rate,
-            embedding_dim=self.__args.intent_embedding_dim
-        )
         # Initialize an Decoder object for slot.
         self.__slot_decoder = LSTMDecoder(
             self.__args.encoder_hidden_dim + self.__args.attention_output_dim,
             self.__args.slot_decoder_hidden_dim,
             self.__num_slot, self.__args.dropout_rate,
-            embedding_dim=self.__args.slot_embedding_dim,
-            extra_dim=self.__num_intent
+            embedding_dim=self.__args.slot_embedding_dim
         )
 
-        # One-hot encoding for augment data feed. 
-        self.__intent_embedding = nn.Embedding(
-            self.__num_intent, self.__num_intent
-        )
-        self.__intent_embedding.weight.data = torch.eye(self.__num_intent)
-        self.__intent_embedding.weight.requires_grad = False
 
     def show_summary(self):
-        """
-        print the abstract of the defined model.
-        """
-
         print('Model parameters are listed as follows:\n')
 
         print('\tnumber of word:                            {};'.format(self.__num_word))
         print('\tnumber of slot:                            {};'.format(self.__num_slot))
-        print('\tnumber of intent:						    {};'.format(self.__num_intent))
         print('\tword embedding dimension:				    {};'.format(self.__args.word_embedding_dim))
         print('\tencoder hidden dimension:				    {};'.format(self.__args.encoder_hidden_dim))
-        print('\tdimension of intent embedding:		    	{};'.format(self.__args.intent_embedding_dim))
         print('\tdimension of slot embedding:			    {};'.format(self.__args.slot_embedding_dim))
         print('\tdimension of slot decoder hidden:  	    {};'.format(self.__args.slot_decoder_hidden_dim))
-        print('\tdimension of intent decoder hidden:        {};'.format(self.__args.intent_decoder_hidden_dim))
         print('\thidden dimension of self-attention:        {};'.format(self.__args.attention_hidden_dim))
         print('\toutput dimension of self-attention:        {};'.format(self.__args.attention_output_dim))
 
         print('\nEnd of parameters show. Now training begins.\n\n')
 
-    def forward(self, text, seq_lens, n_predicts=None, forced_slot=None, forced_intent=None):
+    def forward(self, text, seq_lens, n_predicts=None, forced_slot=None):
         word_tensor, _ = self.__embedding(text)
 
         lstm_hiddens = self.__encoder(word_tensor, seq_lens)
@@ -99,47 +78,17 @@ class ModelManager(nn.Module):
         attention_hiddens = self.__attention(word_tensor, seq_lens)
         hiddens = torch.cat([attention_hiddens, lstm_hiddens], dim=1)
 
-        pred_intent = self.__intent_decoder(
-            hiddens, seq_lens,
-            forced_input=forced_intent
-        )
-
-        if not self.__args.differentiable:
-            _, idx_intent = pred_intent.topk(1, dim=-1)
-            feed_intent = self.__intent_embedding(idx_intent.squeeze(1))
-        else:
-            feed_intent = pred_intent
-
         pred_slot = self.__slot_decoder(
             hiddens, seq_lens,
             forced_input=forced_slot,
-            extra_input=feed_intent
         )
 
         if n_predicts is None:
-            return F.log_softmax(pred_slot, dim=1), F.log_softmax(pred_intent, dim=1)
+            return F.log_softmax(pred_slot, dim=1)
         else:
             _, slot_index = pred_slot.topk(n_predicts, dim=1)
-            _, intent_index = pred_intent.topk(n_predicts, dim=1)
 
-            return slot_index.cpu().data.numpy().tolist(), intent_index.cpu().data.numpy().tolist()
-
-    def golden_intent_predict_slot(self, text, seq_lens, golden_intent, n_predicts=1):
-        word_tensor, _ = self.__embedding(text)
-        embed_intent = self.__intent_embedding(golden_intent)
-
-        lstm_hiddens = self.__encoder(word_tensor, seq_lens)
-        attention_hiddens = self.__attention(word_tensor, seq_lens)
-        hiddens = torch.cat([attention_hiddens, lstm_hiddens], dim=1)
-
-        pred_slot = self.__slot_decoder(
-            hiddens, seq_lens, extra_input=embed_intent
-        )
-        _, slot_index = pred_slot.topk(n_predicts, dim=-1)
-
-        # Just predict single slot value.
-        return slot_index.cpu().data.numpy().tolist()
-
+            return slot_index.cpu().data.numpy().tolist()
 
 class EmbeddingCollection(nn.Module):
     """
@@ -159,34 +108,14 @@ class EmbeddingCollection(nn.Module):
             self.__input_dim, self.__embedding_dim
         )
 
-        # Position vector encoder.
-        # self.__position_layer = torch.zeros(self.__max_len, self.__embedding_dim)
-        # position = torch.arange(0, self.__max_len).unsqueeze(1)
-        # div_term = torch.exp(torch.arange(0, self.__embedding_dim, 2) *
-        #                      (-math.log(10000.0) / self.__embedding_dim))
-
-        # Sine wave curve design.
-        # self.__position_layer[:, 0::2] = torch.sin(position * div_term)
-        # self.__position_layer[:, 1::2] = torch.cos(position * div_term)
-        #
-        # self.__position_layer = self.__position_layer.unsqueeze(0)
-        # self.register_buffer('pe', self.__position_layer)
-
     def forward(self, input_x):
         # Get word vector encoding.
         embedding_x = self.__embedding_layer(input_x)
-
-        # Get position encoding.
-        # position_x = Variable(self.pe[:, :input_x.size(1)], requires_grad=False)
-
-        # Board-casting principle.
+    
         return embedding_x, embedding_x
 
 
 class LSTMEncoder(nn.Module):
-    """
-    Encoder structure based on bidirectional LSTM.
-    """
 
     def __init__(self, embedding_dim, hidden_dim, dropout_rate):
         super(LSTMEncoder, self).__init__()

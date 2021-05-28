@@ -3,8 +3,9 @@
 @StartTime	:           2018/08/13
 @Filename	:           process.py
 @Software	:           Pycharm
-@Framework  :           Pytorch
+@Framework      :           Pytorch
 @LastModify	:           2019/05/07
+@Modify         :           dahye
 """
 
 import torch
@@ -19,8 +20,6 @@ import numpy as np
 from tqdm import tqdm
 from collections import Counter
 
-# Utils functions copied from Slot-gated model, origin url:
-# 	https://github.com/MiuLab/SlotGated-SLU/blob/master/utils.py
 from utils import miulab
 
 
@@ -51,47 +50,33 @@ class Processor(object):
 
         dataloader = self.__dataset.batch_delivery('train')
         for epoch in range(0, self.__dataset.num_epoch):
-            total_slot_loss, total_intent_loss = 0.0, 0.0
+            total_slot_loss = 0.0
 
             time_start = time.time()
             self.__model.train()
 
             for text_batch, slot_batch, intent_batch in tqdm(dataloader, ncols=50):
-                padded_text, [sorted_slot, sorted_intent], seq_lens, _ = self.__dataset.add_padding(
-                    text_batch, [(slot_batch, False), (intent_batch, False)]
+                padded_text, [sorted_slot], seq_lens, _ = self.__dataset.add_padding(
+                    text_batch, [(slot_batch, False)]
                 )
-                sorted_intent = [item * num for item, num in zip(sorted_intent, seq_lens)]
-                sorted_intent = list(Evaluator.expand_list(sorted_intent))
 
                 text_var = Variable(torch.LongTensor(padded_text))
                 slot_var = Variable(torch.LongTensor(list(Evaluator.expand_list(sorted_slot))))
-                intent_var = Variable(torch.LongTensor(sorted_intent))
 
                 if torch.cuda.is_available():
                     text_var = text_var.cuda()
                     slot_var = slot_var.cuda()
-                    intent_var = intent_var.cuda()
 
                 random_slot, random_intent = random.random(), random.random()
-                if random_slot < self.__dataset.slot_forcing_rate and \
-                        random_intent < self.__dataset.intent_forcing_rate:
-                    slot_out, intent_out = self.__model(
-                        text_var, seq_lens, forced_slot=slot_var, forced_intent=intent_var
-                    )
-                elif random_slot < self.__dataset.slot_forcing_rate:
-                    slot_out, intent_out = self.__model(
+                if random_slot < self.__dataset.slot_forcing_rate :
+                    slot_out = self.__model(
                         text_var, seq_lens, forced_slot=slot_var
                     )
-                elif random_intent < self.__dataset.intent_forcing_rate:
-                    slot_out, intent_out = self.__model(
-                        text_var, seq_lens, forced_intent=intent_var
-                    )
                 else:
-                    slot_out, intent_out = self.__model(text_var, seq_lens)
+                    slot_out = self.__model(text_var, seq_lens)
 
                 slot_loss = self.__criterion(slot_out, slot_var)
-                intent_loss = self.__criterion(intent_out, intent_var)
-                batch_loss = slot_loss + intent_loss
+                batch_loss = slot_loss
 
                 self.__optimizer.zero_grad()
                 batch_loss.backward()
@@ -99,14 +84,12 @@ class Processor(object):
 
                 try:
                     total_slot_loss += slot_loss.cpu().item()
-                    total_intent_loss += intent_loss.cpu().item()
                 except AttributeError:
                     total_slot_loss += slot_loss.cpu().data.numpy()[0]
-                    total_intent_loss += intent_loss.cpu().data.numpy()[0]
 
             time_con = time.time() - time_start
-            print('[Epoch {:2d}]: The total slot loss on train data is {:2.6f}, intent data is {:2.6f}, cost ' \
-                  'about {:2.6} seconds.'.format(epoch, total_slot_loss, total_intent_loss, time_con))
+            print('[Epoch {:2d}]: The total slot loss on train data is {:2.6f}, cost ' \
+                  'about {:2.6} seconds.'.format(epoch, total_slot_loss, time_con))
 
             change, time_start = False, time.time()
             dev_f1_score, dev_acc, dev_sent_acc = self.estimate(if_dev=True, test_batch=self.__batch_size)
@@ -137,10 +120,6 @@ class Processor(object):
                       '{:2.6f} seconds.\n'.format(epoch, dev_f1_score, dev_acc, dev_sent_acc, time_con))
 
     def estimate(self, if_dev, test_batch=100):
-        """
-        Estimate the performance of model on dev or test dataset.
-        """
-
         if if_dev:
             pred_slot, real_slot, pred_intent, real_intent, _ = self.prediction(
                 self.__model, self.__dataset, "dev", test_batch
@@ -156,12 +135,10 @@ class Processor(object):
 
         return slot_f1_socre, intent_acc, sent_acc
 
+
+
     @staticmethod
     def validate(model_path, dataset_path, batch_size):
-        """
-        validation will write mistaken samples to files and make scores.
-        """
-
         model = torch.load(model_path)
         dataset = torch.load(dataset_path)
 
@@ -213,6 +190,8 @@ class Processor(object):
 
         return slot_f1, intent_acc, sent_acc
 
+
+
     @staticmethod
     def prediction(model, dataset, mode, batch_size):
         model.eval()
@@ -242,7 +221,7 @@ class Processor(object):
                 for i in range(len(sorted_index)):
                     tmp_intent[sorted_index[i]] = sorted_intent[i]
                 sorted_intent = tmp_intent
-            
+
             real_slot.extend(sorted_slot)
             real_intent.extend(list(Evaluator.expand_list(sorted_intent)))
 
@@ -252,39 +231,38 @@ class Processor(object):
             if torch.cuda.is_available():
                 var_text = var_text.cuda()
 
-            slot_idx, intent_idx = model(var_text, seq_lens, n_predicts=1)
+            slot_idx = model(var_text, seq_lens, n_predicts=1)
             nested_slot = Evaluator.nested_list([list(Evaluator.expand_list(slot_idx))], seq_lens)[0]
-            
+
             if mode == 'test':
                 tmp_r_slot = [[] for _ in range(len(sorted_index))]
                 for i in range(len(sorted_index)):
                     tmp_r_slot[sorted_index[i]] = nested_slot[i]
                 nested_slot = tmp_r_slot
-            
-            pred_slot.extend(dataset.slot_alphabet.get_instance(nested_slot))
-            nested_intent = Evaluator.nested_list([list(Evaluator.expand_list(intent_idx))], seq_lens)[0]
-            
-            if mode == 'test':
-                tmp_intent = [[] for _ in range(len(sorted_index))]
-                for i in range(len(sorted_index)):
-                    tmp_intent[sorted_index[i]] = nested_intent[i]
-                nested_intent = tmp_intent
-            
-            pred_intent.extend(dataset.intent_alphabet.get_instance(nested_intent))
+
+            intent_slot = dataset.slot_alphabet.get_instance(nested_slot)
+            for i in range(len(intent_slot)):
+                spilt_slots, spilt_intents = [], []
+
+                for j in range(len(intent_slot[i])):
+                    if intent_slot[i][j] != 'O':
+                        spilt_intent, spilt_slot = intent_slot[i][j].split('/')
+                        spilt_intents.extend([spilt_intent])
+                        spilt_slots.extend([spilt_slot])
+                    else:
+                        spilt_slots.extend(intent_slot[i][j])
+                pred_slot.append(spilt_slots)
+                pred_intent.append(spilt_intents)
 
         exp_pred_intent = Evaluator.max_freq_predict(pred_intent)
         return pred_slot, real_slot, exp_pred_intent, real_intent, pred_intent
+
 
 
 class Evaluator(object):
 
     @staticmethod
     def semantic_acc(pred_slot, real_slot, pred_intent, real_intent):
-        """
-        Compute the accuracy based on the whole predictions of
-        given sentence, including slot and intent.
-        """
-
         total_count, correct_count = 0.0, 0.0
         for p_slot, r_slot, p_intent, r_intent in zip(pred_slot, real_slot, pred_intent, real_intent):
 
@@ -356,14 +334,18 @@ class Evaluator(object):
         return 2 * p * r / (p + r) if p + r != 0 else 0
 
     """
-    Max frequency prediction. 
+    Max frequency prediction.
     """
 
     @staticmethod
     def max_freq_predict(sample):
         predict = []
         for items in sample:
-            predict.append(Counter(items).most_common(1)[0][0])
+            freq = Counter(items).most_common(1)
+            if len(freq) == 0:
+                predict.append('None')
+            else:
+                predict.append(freq[0][0])
         return predict
 
     @staticmethod
