@@ -268,7 +268,7 @@ class DatasetManager(object):
         # slot에 intent 같이 써주기
         for i in range(len(slots)):
             for j in range(len(slots[i])):
-                #if slots[i][j] != 'O':
+               if slots[i][j] != 'O':
                     slots[i][j] = intents[i][0] + '/' + slots[i][j]
 
         return texts, slots, intents
